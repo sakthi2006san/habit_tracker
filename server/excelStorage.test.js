@@ -19,7 +19,7 @@ describe('Excel storage', () => {
     const habit = {
       id: 'reading', name: 'Read', icon: 'book', category: 'learning', color: '#4778b9', frequency: 'daily',
       customDays: [], target: 1, createdAt: '2026-09-28T00:00:00.000Z', paused: false, archived: false,
-      completions: { '2026-09-28': true, '2026-09-27': true },
+      completions: { '2026-09-28': true, '2026-09-27': true, '2026-08-31': true },
     }
 
     expect(await storage.readHabits()).toEqual([])
@@ -29,12 +29,21 @@ describe('Excel storage', () => {
 
     const workbook = new ExcelJS.Workbook()
     await workbook.xlsx.readFile(join(temporaryDirectory, 'habits.xlsx'))
-    const dailyLog = workbook.getWorksheet('Daily Log')
-    expect(dailyLog.getRow(1).values.slice(1)).toEqual(['Date', 'Habit ID', 'Habit', 'Completed'])
-    expect([dailyLog.getRow(2), dailyLog.getRow(3)].map((row) => row.values.slice(1))).toEqual([
+    const septemberLog = workbook.getWorksheet('2026-09')
+    const augustLog = workbook.getWorksheet('2026-08')
+    expect(septemberLog.getRow(1).values.slice(1)).toEqual(['Date', 'Habit ID', 'Habit', 'Completed'])
+    expect([septemberLog.getRow(2), septemberLog.getRow(3)].map((row) => row.values.slice(1))).toEqual([
       ['2026-09-27', 'reading', 'Read', true],
       ['2026-09-28', 'reading', 'Read', true],
     ])
+    expect(augustLog.getRow(2).values.slice(1)).toEqual(['2026-08-31', 'reading', 'Read', true])
+
+    await storage.writeHabits([{ ...habit, completions: { '2026-09-28': true } }])
+    const updatedWorkbook = new ExcelJS.Workbook()
+    await updatedWorkbook.xlsx.readFile(join(temporaryDirectory, 'habits.xlsx'))
+    expect(updatedWorkbook.getWorksheet('2026-08').rowCount).toBe(1)
+    expect(updatedWorkbook.getWorksheet('2026-09').rowCount).toBe(2)
+    expect(updatedWorkbook.getWorksheet('Daily Log')).toBeUndefined()
   })
 
   it('parses key-value properties', () => {

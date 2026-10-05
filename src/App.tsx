@@ -13,6 +13,7 @@ const categoryColors: Record<HabitCategory, string> = { health: '#3e9d8b', fitne
 const categoryLabels: Record<HabitCategory, string> = { health: 'Health', fitness: 'Fitness', mindfulness: 'Mindfulness', learning: 'Learning', productivity: 'Productivity', personal: 'Personal', finance: 'Finance', social: 'Social', other: 'Other' }
 const navItems = [{ to: '/dashboard', label: 'Overview', icon: LayoutDashboard }, { to: '/habits', label: 'Habits', icon: Target }, { to: '/calendar', label: 'Calendar', icon: CalendarDays }, { to: '/analytics', label: 'Analytics', icon: BarChart3 }]
 const todayKey = dateKey(new Date())
+let storageLoadVersion = 0
 
 export default function App() { return <BrowserRouter><AppRoutes /></BrowserRouter> }
 function AppRoutes() {
@@ -21,9 +22,12 @@ function AppRoutes() {
 
   useEffect(() => {
     let active = true
+    const loadVersion = ++storageLoadVersion
     let previousHabits = useHabitStore.getState().habits
     let saveTimer: number | undefined
-    let unsubscribe = () => {}
+    let loading = true
+    let changedWhileLoading = false
+    let saveAfterLoad = false
 
     const saveHabits = (habits: Habit[]) => {
       window.clearTimeout(saveTimer)
@@ -32,8 +36,15 @@ function AppRoutes() {
           method: 'PUT',
           headers: { 'content-type': 'application/json' },
           body: JSON.stringify({ habits }),
-        }).then((response) => {
-          if (!response.ok) throw new Error('Excel save failed')
+        }).then(async (response) => {
+          const result: unknown = await response.json().catch(() => null)
+          if (!response.ok) {
+            const message = result && typeof result === 'object' && 'error' in result && typeof result.error === 'string' ? result.error : 'Excel save failed'
+            throw new Error(message)
+          }
+          if (!result || typeof result !== 'object' || !('saved' in result) || result.saved !== habits.length || !('verified' in result) || result.verified !== true) {
+            throw new Error('Excel did not verify the saved habits.')
+          }
           if (active) setExcelStorageStatus('connected')
         }).catch(() => {
           if (active) setExcelStorageStatus('unavailable')
@@ -41,14 +52,12 @@ function AppRoutes() {
       }, 250)
     }
 
-    const subscribe = () => {
-      previousHabits = useHabitStore.getState().habits
-      unsubscribe = useHabitStore.subscribe((state) => {
-        if (state.habits === previousHabits) return
-        previousHabits = state.habits
-        saveHabits(state.habits)
-      })
-    }
+    const unsubscribe = useHabitStore.subscribe((state) => {
+      if (state.habits === previousHabits) return
+      previousHabits = state.habits
+      if (loading) changedWhileLoading = true
+      else saveHabits(state.habits)
+    })
 
     void fetch('/api/habits').then(async (response) => {
       if (!response.ok) throw new Error('Excel storage is unavailable')
@@ -56,15 +65,20 @@ function AppRoutes() {
       if (!value || typeof value !== 'object' || !('habits' in value) || !Array.isArray(value.habits) || !value.habits.every(isHabit) || !('initialized' in value) || typeof value.initialized !== 'boolean') {
         throw new Error('Excel data is invalid')
       }
-      if (active) {
+      if (active && loadVersion === storageLoadVersion) {
         setExcelStorageStatus('connected')
-        if (value.initialized) useHabitStore.setState({ habits: value.habits })
-        else saveHabits(useHabitStore.getState().habits)
+        if (value.initialized && !changedWhileLoading) {
+          previousHabits = value.habits
+          useHabitStore.setState({ habits: value.habits })
+        } else saveAfterLoad = true
       }
     }).catch(() => {
-      if (active) setExcelStorageStatus('unavailable')
+      if (active && loadVersion === storageLoadVersion) setExcelStorageStatus('unavailable')
     }).finally(() => {
-      if (active) subscribe()
+      if (active && loadVersion === storageLoadVersion) {
+        loading = false
+        if (saveAfterLoad || changedWhileLoading) saveHabits(useHabitStore.getState().habits)
+      }
     })
 
     return () => {
